@@ -16,10 +16,10 @@ export async function handleSkills(ctx: Context): Promise<void> {
     return
   }
 
-  const names = skills.map((s) => `\`/${s.name}\``).join(', ')
+  const names = skills.map((s) => `\`/${s.name}\``).join('\n')
 
   await ctx.reply(
-    `**Skills (${skills.length}):** ${names}`,
+    `**Skills (${skills.length}):**\n${names}`,
     { parse_mode: 'Markdown' },
   )
 }
