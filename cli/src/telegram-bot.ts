@@ -4,6 +4,8 @@
 
 import { Bot, type Context } from 'grammy'
 import fs from 'node:fs'
+import path from 'node:path'
+import os from 'node:os'
 import * as errore from 'errore'
 import { createLogger, LogPrefix } from './logger.js'
 import { transcribeAudio } from './voice.js'
@@ -197,6 +199,55 @@ async function handleTelegramMessage(ctx: Context, appId: string, botUsername: s
   }
 }
 
+// ── Auto-detect project directory from message ─────────────────
+// When the user mentions a directory path in their message, check if it's
+// a project root (has .git) and auto-bind the channel to it. This saves
+// the user from having to manually /addproject when they say "cd ~/MyProject".
+
+async function autoDetectProject({
+  text,
+  channelId,
+  currentDirectory,
+}: {
+  text: string
+  channelId: string
+  currentDirectory: string
+}): Promise<string | null> {
+  // Extract paths: absolute (/home/...) or home-relative (~/...)
+  const pathRegex = /(?:~\/[\w./-]+|\/(?:home|Users)\/[\w./-]+)/g
+  const matches = text.match(pathRegex)
+  if (!matches) return null
+
+  for (const raw of matches) {
+    const resolved = raw.startsWith('~/')
+      ? path.join(os.homedir(), raw.slice(2))
+      : raw
+
+    // Walk up to find the closest directory that's a git repo
+    let dir = resolved
+    for (let i = 0; i < 5; i++) {
+      if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) {
+        dir = path.dirname(dir)
+        continue
+      }
+      if (fs.existsSync(path.join(dir, '.git'))) {
+        if (dir === currentDirectory) return null // already bound
+        await setChannelDirectory({ channelId, directory: dir, channelType: 'text' })
+        const result = await initializeOpencodeForDirectory(dir)
+        if (result instanceof Error) {
+          logger.error(`Auto-detect: failed to init OpenCode for ${dir}: ${result.message}`)
+          return null
+        }
+        logger.log(`Auto-detect: bound channel ${channelId} to project ${dir}`)
+        return dir
+      }
+      break
+    }
+  }
+
+  return null
+}
+
 // ── Direct message handler ───────────────────────────────────────
 // DMs to the bot — simplest flow, no group/topic needed.
 // Each DM chat is one continuous session. The "topic ID" is 0
@@ -249,7 +300,14 @@ async function handleDirectMessage({
     return
   }
 
-  const projectDirectory = channelConfig.directory
+  // Auto-detect project directory from message text (e.g. "cd ~/UniRefund")
+  const detectedDir = await autoDetectProject({
+    text,
+    channelId,
+    currentDirectory: channelConfig.directory,
+  })
+  const projectDirectory = detectedDir || channelConfig.directory
+
   if (!fs.existsSync(projectDirectory)) {
     await ctx.reply(`Project directory does not exist: ${projectDirectory}`)
     return
@@ -488,12 +546,19 @@ async function handleTopicMessage({
       return
     }
 
+    // Auto-detect project directory from message text
+    const detectedDir = await autoDetectProject({
+      text,
+      channelId,
+      currentDirectory: channelConfig.directory,
+    })
+
     // Start a new session in this existing topic
     await startSessionInTopic({
       ctx,
       chatId,
       topicId,
-      projectDirectory: channelConfig.directory,
+      projectDirectory: detectedDir || channelConfig.directory,
       userId,
       username,
       text,
@@ -515,7 +580,14 @@ async function handleTopicMessage({
   if (!channelConfig) {
     return
   }
-  const projectDirectory = channelConfig.directory
+
+  // Auto-detect project directory from message text
+  const detectedDir2 = await autoDetectProject({
+    text,
+    channelId,
+    currentDirectory: channelConfig.directory,
+  })
+  const projectDirectory = detectedDir2 || channelConfig.directory
 
   if (!fs.existsSync(projectDirectory)) {
     logger.error(`Directory does not exist: ${projectDirectory}`)
