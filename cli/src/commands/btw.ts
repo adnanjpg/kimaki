@@ -19,6 +19,7 @@ import {
 import { getOrCreateRuntime } from '../session-handler/thread-session-runtime.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import type { CommandContext } from './types.js'
+import { DiscordThread } from '../platform/discord-thread.js'
 
 const logger = createLogger(LogPrefix.FORK)
 
@@ -90,7 +91,7 @@ export async function forkSessionToBtwThread({
 
   const runtime = getOrCreateRuntime({
     threadId: thread.id,
-    thread,
+    thread: new DiscordThread(thread),
     projectDirectory,
     sdkDirectory: projectDirectory,
     channelId: textChannel.id,

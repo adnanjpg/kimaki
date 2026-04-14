@@ -3,18 +3,14 @@
 // Accept, Accept Always, and Deny.
 
 import {
-  ButtonBuilder,
-  ButtonStyle,
   type ButtonInteraction,
-  ActionRowBuilder,
-  type ThreadChannel,
   MessageFlags,
 } from 'discord.js'
 import crypto from 'node:crypto'
 import type { PermissionRequest } from '@opencode-ai/sdk/v2'
 import { getOpencodeClient } from '../opencode.js'
-import { NOTIFY_MESSAGE_FLAGS } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
+import type { PlatformThread } from '../platform/index.js'
 
 const logger = createLogger(LogPrefix.PERMISSIONS)
 
@@ -68,7 +64,7 @@ type PendingPermissionContext = {
   requestIds: string[]
   directory: string
   permissionDirectory: string
-  thread: ThreadChannel
+  thread: PlatformThread
   contextHash: string
   messageId?: string
 }
@@ -104,7 +100,7 @@ export async function showPermissionButtons({
   permissionDirectory,
   subtaskLabel,
 }: {
-  thread: ThreadChannel
+  thread: PlatformThread
   permission: PermissionRequest
   directory: string
   permissionDirectory: string
@@ -151,28 +147,6 @@ export async function showPermissionButtons({
 
   const patternStr = compactPermissionPatterns(permission.patterns).join(', ')
 
-  // Build 3 buttons for permission actions
-  const acceptButton = new ButtonBuilder()
-    .setCustomId(`permission_once:${contextHash}`)
-    .setLabel('Accept')
-    .setStyle(ButtonStyle.Success)
-
-  const acceptAlwaysButton = new ButtonBuilder()
-    .setCustomId(`permission_always:${contextHash}`)
-    .setLabel('Accept Always')
-    .setStyle(ButtonStyle.Success)
-
-  const denyButton = new ButtonBuilder()
-    .setCustomId(`permission_reject:${contextHash}`)
-    .setLabel('Deny')
-    .setStyle(ButtonStyle.Secondary)
-
-  const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    acceptButton,
-    acceptAlwaysButton,
-    denyButton,
-  )
-
   const subtaskLine = subtaskLabel ? `**From:** \`${subtaskLabel}\`\n` : ''
   const externalDirLine =
     permission.permission === 'external_directory'
@@ -184,10 +158,13 @@ export async function showPermissionButtons({
     `**Type:** \`${permission.permission}\`\n` +
     externalDirLine +
     (patternStr ? `**Pattern:** \`${patternStr}\`` : '')
-  const permissionMessage = await thread.send({
-    content: fullContent.slice(0, 1900),
-    components: [actionRow],
-    flags: NOTIFY_MESSAGE_FLAGS | MessageFlags.SuppressEmbeds,
+  const permissionMessage = await thread.send(fullContent, {
+    flags: 'notify',
+    buttons: [
+      { customId: `permission_once:${contextHash}`, label: 'Accept', style: 'success' },
+      { customId: `permission_always:${contextHash}`, label: 'Accept Always', style: 'success' },
+      { customId: `permission_reject:${contextHash}`, label: 'Deny', style: 'secondary' },
+    ],
   })
 
   context.messageId = permissionMessage.id
@@ -207,27 +184,20 @@ function updatePermissionMessage({
   if (!context.messageId) {
     return
   }
-  context.thread.messages
-    .fetch(context.messageId)
-    .then((message) => {
-      const patternStr = compactPermissionPatterns(context.permission.patterns).join(', ')
-      const externalDirLine =
-        context.permission.permission === 'external_directory'
-          ? 'Agent is accessing files outside the project. [Learn more](https://opencode.ai/docs/permissions/#external-directories)\n'
-          : ''
-      return message.edit({
-        content:
-          `⚠️ **Permission Required**\n` +
-          `**Type:** \`${context.permission.permission}\`\n` +
-          externalDirLine +
-          (patternStr ? `**Pattern:** \`${patternStr}\`\n` : '') +
-          status,
-        components: [],
-      })
-    })
-    .catch((error) => {
-      logger.error('Failed to update permission message:', error)
-    })
+  const patternStr = compactPermissionPatterns(context.permission.patterns).join(', ')
+  const externalDirLine =
+    context.permission.permission === 'external_directory'
+      ? 'Agent is accessing files outside the project. [Learn more](https://opencode.ai/docs/permissions/#external-directories)\n'
+      : ''
+  const content =
+    `⚠️ **Permission Required**\n` +
+    `**Type:** \`${context.permission.permission}\`\n` +
+    externalDirLine +
+    (patternStr ? `**Pattern:** \`${patternStr}\`\n` : '') +
+    status
+  context.thread.edit(context.messageId, { content }).catch((error) => {
+    logger.error('Failed to update permission message:', error)
+  })
 }
 
 export async function cancelPendingPermission(threadId: string): Promise<boolean> {

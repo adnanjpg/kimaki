@@ -6,7 +6,7 @@
 // call runtime APIs (enqueueIncoming, abortActiveRun, etc.) without inspecting
 // run internals.
 
-import { ChannelType, type ThreadChannel } from 'discord.js'
+import type { PlatformThread, MessageFlagPreset } from '../platform/index.js'
 import type {
   Event as OpenCodeEvent,
   Part,
@@ -30,11 +30,9 @@ import {
 } from '../opencode.js'
 import { isAbortError } from '../utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
-import {
-  sendThreadMessage,
-  SILENT_MESSAGE_FLAGS,
-  NOTIFY_MESSAGE_FLAGS,
-} from '../discord-utils.js'
+// Note: SILENT_MESSAGE_FLAGS and NOTIFY_MESSAGE_FLAGS from discord-utils are no
+// longer used here — the PlatformThread.send() interface uses 'silent'/'notify'
+// flag presets instead. The DiscordThread implementation translates internally.
 import type { DiscordFileAttachment } from '../message-formatting.js'
 import { formatPart } from '../message-formatting.js'
 import {
@@ -177,7 +175,7 @@ export function getRuntime(
 
 export type RuntimeOptions = {
   threadId: string
-  thread: ThreadChannel
+  thread: PlatformThread
   projectDirectory: string
   sdkDirectory: string
   channelId?: string
@@ -562,7 +560,7 @@ export class ThreadSessionRuntime {
   sdkDirectory: string
   readonly channelId: string | undefined
   readonly appId: string | undefined
-  readonly thread: ThreadChannel
+  readonly thread: PlatformThread
 
   // ── Resource handles (mechanisms, not domain state) ──
 
@@ -1711,7 +1709,7 @@ export class ThreadSessionRuntime {
   // ── Part Buffering & Output ─────────────────────────────────
 
   private getVerbosityChannelId(): string {
-    return this.channelId || this.thread.parentId || this.thread.id
+    return this.channelId || this.thread.parentChannelId || this.thread.id
   }
 
   private async getVerbosity() {
@@ -1797,7 +1795,7 @@ export class ThreadSessionRuntime {
     })
 
     const sendResult = await errore.tryAsync(() => {
-      return sendThreadMessage(this.thread, content)
+      return this.thread.send(content)
     })
     if (sendResult instanceof Error) {
       threadState.updateThread(this.threadId, (t) => {
@@ -2065,7 +2063,7 @@ export class ThreadSessionRuntime {
     this.lastDisplayedContextPercentage = thresholdCrossed
     const chunk = `⬦ context usage ${currentPercentage}%`
     const sendResult = await errore.tryAsync(() => {
-      return this.thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
+      return this.thread.send(chunk)
     })
     if (sendResult instanceof Error) {
       discordLogger.error('Failed to send context usage notice:', sendResult)
@@ -2130,7 +2128,7 @@ export class ThreadSessionRuntime {
               return { ...t, sentPartIds: newIds }
             })
             const sendResult = await errore.tryAsync(() => {
-              return sendThreadMessage(this.thread, taskDisplay + '\n\n')
+              return this.thread.send(taskDisplay + '\n\n')
             })
             if (sendResult instanceof Error) {
               threadState.updateThread(this.threadId, (t) => {
@@ -2195,10 +2193,9 @@ export class ThreadSessionRuntime {
               '[ACTION] Failed to show action buttons:',
               showResult,
             )
-            await sendThreadMessage(
-              this.thread,
+            await this.thread.send(
               `Failed to show action buttons: ${showResult.message}`,
-              { flags: NOTIFY_MESSAGE_FLAGS },
+              { flags: 'notify' },
             )
           }
         },
@@ -2263,10 +2260,7 @@ export class ThreadSessionRuntime {
           })()
           const chunk = `⬦ ${part.tool} returned ${formattedTokens} tokens${percentageSuffix}`
           const largeOutputResult = await errore.tryAsync(() => {
-            return this.thread.send({
-              content: chunk,
-              flags: SILENT_MESSAGE_FLAGS,
-            })
+            return this.thread.send(chunk)
           })
           if (largeOutputResult instanceof Error) {
             discordLogger.error('Failed to send large output notice:', largeOutputResult)
@@ -2328,7 +2322,7 @@ export class ThreadSessionRuntime {
       return
     }
     const sendResult = await errore.tryAsync(() => {
-      return sendThreadMessage(this.thread, content + '\n\n')
+      return this.thread.send(content + '\n\n')
     })
     if (sendResult instanceof Error) {
       discordLogger.error(
@@ -2460,10 +2454,9 @@ export class ThreadSessionRuntime {
 
     const errorMessage = formatSessionErrorFromProps(properties.error)
     logger.error(`Sending error to thread: ${errorMessage}`)
-    await sendThreadMessage(
-      this.thread,
+    await this.thread.send(
       `✗ opencode session error: ${errorMessage}`,
-      { flags: NOTIFY_MESSAGE_FLAGS },
+      { flags: 'notify' },
     )
     await this.persistEventBufferDebounced.flush()
 
@@ -2725,8 +2718,7 @@ export class ThreadSessionRuntime {
       ? `/${next.command.name}`
       : `${next.prompt.slice(0, 150)}${next.prompt.length > 150 ? '...' : ''}`
     if (displayText.trim()) {
-      await sendThreadMessage(
-        this.thread,
+      await this.thread.send(
         `» **${next.username}:** ${displayText}`,
       )
     }
@@ -2782,7 +2774,7 @@ export class ThreadSessionRuntime {
 
     const chunk = `⬦ ${message} - retrying in ${duration} (attempt #${attempt})`
     const retryResult = await errore.tryAsync(() => {
-      return this.thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
+      return this.thread.send(chunk)
     })
     if (retryResult instanceof Error) {
       discordLogger.error('Failed to send retry notice:', retryResult)
@@ -2874,7 +2866,7 @@ export class ThreadSessionRuntime {
       : ''
     const chunk = `⬦ ${properties.variant}: ${titlePrefix}${toastMessage}`
     const toastResult = await errore.tryAsync(() => {
-      return this.thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
+      return this.thread.send(chunk)
     })
     if (toastResult instanceof Error) {
       discordLogger.error('Failed to send toast notice:', toastResult)
@@ -2913,9 +2905,7 @@ export class ThreadSessionRuntime {
       // Helper: stop typing and drain queued local messages on error.
       const cleanupOnError = async (errorMessage: string) => {
         this.stopTyping()
-        await sendThreadMessage(this.thread, errorMessage, {
-          flags: NOTIFY_MESSAGE_FLAGS,
-        })
+        await this.thread.send(errorMessage, { flags: 'notify' })
         await this.tryDrainQueue({ showIndicator: true })
       }
 
@@ -3069,24 +3059,7 @@ export class ThreadSessionRuntime {
             }
           : undefined
 
-      const channelTopic = await (async () => {
-        if (this.thread.parent?.type === ChannelType.GuildText) {
-          return this.thread.parent.topic?.trim() || undefined
-        }
-        if (!channelId) {
-          return undefined
-        }
-        const fetched = await errore.tryAsync(() => {
-          return this.thread.guild.channels.fetch(channelId)
-        })
-        if (fetched instanceof Error || !fetched) {
-          return undefined
-        }
-        if (fetched.type !== ChannelType.GuildText) {
-          return undefined
-        }
-        return fetched.topic?.trim() || undefined
-      })()
+      const channelTopic = await this.thread.getParentTopic(channelId)
       const worktreeChanged = this.consumeWorktreePromptChange(worktree)
       const syntheticContext = getOpencodePromptContext({
         username: input.username,
@@ -3111,7 +3084,7 @@ export class ThreadSessionRuntime {
         system: getOpencodeSystemMessage({
           sessionId: session.id,
           channelId,
-          guildId: this.thread.guildId,
+          guildId: this.thread.serverId,
           threadId: this.thread.id,
           channelTopic,
           agents: availableAgents,
@@ -3474,12 +3447,12 @@ export class ThreadSessionRuntime {
     return this.state?.queueItems.length ?? 0
   }
 
-  /** NOTIFY_MESSAGE_FLAGS unless queue has a next item, then SILENT.
+  /** 'notify' unless queue has a next item, then 'silent'.
    * Permissions should NOT use this — they always notify. */
-  private getNotifyFlags(): number {
+  private getNotifyFlags(): MessageFlagPreset {
     return this.getQueueLength() > 0
-      ? SILENT_MESSAGE_FLAGS
-      : NOTIFY_MESSAGE_FLAGS
+      ? 'silent'
+      : 'notify'
   }
 
   /** Clear all queued messages. */
@@ -3540,8 +3513,7 @@ export class ThreadSessionRuntime {
         ? `/${next.command.name}`
         : `${next.prompt.slice(0, 150)}${next.prompt.length > 150 ? '...' : ''}`
       if (displayText.trim()) {
-        await sendThreadMessage(
-          this.thread,
+        await this.thread.send(
           `» **${next.username}:** ${displayText}`,
         )
       }
@@ -3589,10 +3561,9 @@ export class ThreadSessionRuntime {
     })
     if (sessionResult instanceof Error) {
       this.stopTyping()
-      await sendThreadMessage(
-        this.thread,
+      await this.thread.send(
         `✗ ${sessionResult.message}`,
-        { flags: NOTIFY_MESSAGE_FLAGS },
+        { flags: 'notify' },
       )
       // Show indicator: this dispatch failed, so the next queued message
       // has been waiting — the user needs to see which one is starting.
@@ -3636,10 +3607,9 @@ export class ThreadSessionRuntime {
     })
     if (earlyAgentResult instanceof Error) {
       this.stopTyping()
-      await sendThreadMessage(
-        this.thread,
+      await this.thread.send(
         `Failed to resolve agent: ${earlyAgentResult.message}`,
-        { flags: NOTIFY_MESSAGE_FLAGS },
+        { flags: 'notify' },
       )
       // Show indicator: dispatch failed mid-setup, next queued message was waiting.
       await this.tryDrainQueue({ showIndicator: true })
@@ -3677,10 +3647,9 @@ export class ThreadSessionRuntime {
     ])
     if (earlyModelResult instanceof Error) {
       this.stopTyping()
-      await sendThreadMessage(
-        this.thread,
+      await this.thread.send(
         `Failed to resolve model: ${earlyModelResult.message}`,
-        { flags: NOTIFY_MESSAGE_FLAGS },
+        { flags: 'notify' },
       )
       // Show indicator: dispatch failed mid-setup, next queued message was waiting.
       await this.tryDrainQueue({ showIndicator: true })
@@ -3689,8 +3658,7 @@ export class ThreadSessionRuntime {
     const earlyModelParam = earlyModelResult
     if (!earlyModelParam) {
       this.stopTyping()
-      await sendThreadMessage(
-        this.thread,
+      await this.thread.send(
         'No AI provider connected. Configure a provider in OpenCode with `/connect` command.',
       )
       // Show indicator: dispatch failed, next queued message was waiting.
@@ -3753,24 +3721,7 @@ export class ThreadSessionRuntime {
           }
         : undefined
 
-    const channelTopic = await (async () => {
-      if (this.thread.parent?.type === ChannelType.GuildText) {
-        return this.thread.parent.topic?.trim() || undefined
-      }
-      if (!channelId) {
-        return undefined
-      }
-      const fetched = await errore.tryAsync(() => {
-        return this.thread.guild.channels.fetch(channelId)
-      })
-      if (fetched instanceof Error || !fetched) {
-        return undefined
-      }
-      if (fetched.type !== ChannelType.GuildText) {
-        return undefined
-      }
-      return fetched.topic?.trim() || undefined
-    })()
+    const channelTopic = await this.thread.getParentTopic(channelId)
     const worktreeChanged = this.consumeWorktreePromptChange(worktree)
     const syntheticContext = getOpencodePromptContext({
       username: input.username,
@@ -3855,10 +3806,9 @@ export class ThreadSessionRuntime {
             `[DISPATCH] Command timed out after 30s sessionId=${session.id}`,
           )
           this.stopTyping()
-          await sendThreadMessage(
-            this.thread,
+          await this.thread.send(
             '✗ Command timed out after 30 seconds. Try a shorter command or run it with /run-shell-command.',
-            { flags: NOTIFY_MESSAGE_FLAGS },
+            { flags: 'notify' },
           )
           await this.dispatchAction(() => {
             return this.tryDrainQueue({ showIndicator: true })
@@ -3880,10 +3830,9 @@ export class ThreadSessionRuntime {
         )
         void notifyError(commandResponse, 'Failed to send command to OpenCode')
         this.stopTyping()
-        await sendThreadMessage(
-          this.thread,
+        await this.thread.send(
           `✗ Unexpected bot Error: ${commandResponse.message}`,
-          { flags: NOTIFY_MESSAGE_FLAGS },
+          { flags: 'notify' },
         )
         await this.dispatchAction(() => {
           return this.tryDrainQueue({ showIndicator: true })
@@ -3904,9 +3853,7 @@ export class ThreadSessionRuntime {
         logger.error(`[DISPATCH] ${apiError.message}`)
         void notifyError(apiError, 'OpenCode API error during command')
         this.stopTyping()
-        await sendThreadMessage(this.thread, `✗ ${apiError.message}`, {
-          flags: NOTIFY_MESSAGE_FLAGS,
-        })
+        await this.thread.send(`✗ ${apiError.message}`, { flags: 'notify' })
         await this.dispatchAction(() => {
           return this.tryDrainQueue({ showIndicator: true })
         })
@@ -3925,7 +3872,7 @@ export class ThreadSessionRuntime {
         system: getOpencodeSystemMessage({
           sessionId: session.id,
           channelId,
-          guildId: this.thread.guildId,
+          guildId: this.thread.serverId,
           threadId: this.thread.id,
           channelTopic,
           agents: earlyAvailableAgents,
@@ -3950,9 +3897,7 @@ export class ThreadSessionRuntime {
       logger.error(`[DISPATCH] Prompt API call failed: ${errorMessage}`)
       void notifyError(errorObject, 'OpenCode API error during local queue prompt')
       this.stopTyping()
-      await sendThreadMessage(this.thread, `✗ OpenCode API error: ${errorMessage}`, {
-        flags: NOTIFY_MESSAGE_FLAGS,
-      })
+      await this.thread.send(`✗ OpenCode API error: ${errorMessage}`, { flags: 'notify' })
       await this.dispatchAction(() => {
         return this.tryDrainQueue({ showIndicator: true })
       })
@@ -4235,7 +4180,7 @@ export class ThreadSessionRuntime {
 
     // Skip notification if there's a queued message next — the user only
     // needs to be notified when the entire queue finishes.
-    await sendThreadMessage(this.thread, footerText, {
+    await this.thread.send(footerText, {
       flags: this.getNotifyFlags(),
     })
     logger.log(

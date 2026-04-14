@@ -15,6 +15,7 @@ import {
 import { createLogger, LogPrefix } from '../logger.js'
 import { notifyError } from '../sentry.js'
 import { store } from '../store.js'
+import { DiscordThread } from '../platform/discord-thread.js'
 
 const logger = createLogger(LogPrefix.QUEUE)
 
@@ -70,7 +71,7 @@ export async function handleQueueCommand({
 
   const runtime = getOrCreateRuntime({
     threadId: thread.id,
-    thread,
+    thread: new DiscordThread(thread),
     projectDirectory: resolved.projectDirectory,
     sdkDirectory: resolved.workingDirectory,
     channelId: thread.parentId || thread.id,
@@ -237,7 +238,7 @@ export async function handleQueueCommandCommand({
 
   const runtime = getOrCreateRuntime({
     threadId: thread.id,
-    thread,
+    thread: new DiscordThread(thread),
     projectDirectory: resolved.projectDirectory,
     sdkDirectory: resolved.workingDirectory,
     channelId: thread.parentId || thread.id,

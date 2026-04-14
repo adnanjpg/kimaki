@@ -3,26 +3,23 @@
 // button clicks back into the session as a new user message.
 
 import {
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
   MessageFlags,
   type ButtonInteraction,
-  type ThreadChannel,
 } from 'discord.js'
 import crypto from 'node:crypto'
 import { getThreadSession } from '../database.js'
 import {
-  NOTIFY_MESSAGE_FLAGS,
-  SILENT_MESSAGE_FLAGS,
   resolveWorkingDirectory,
   sendThreadMessage,
+  NOTIFY_MESSAGE_FLAGS,
 } from '../discord-utils.js'
 import { createLogger } from '../logger.js'
 import { notifyError } from '../sentry.js'
 import {
   getOrCreateRuntime,
 } from '../session-handler/thread-session-runtime.js'
+import type { PlatformThread } from '../platform/index.js'
+import { DiscordThread } from '../platform/discord-thread.js'
 
 const logger = createLogger('ACT_BTN')
 const PENDING_TTL_MS = 24 * 60 * 60 * 1000
@@ -44,7 +41,7 @@ export type ActionButtonsRequest = {
 type PendingActionButtonsContext = {
   sessionId: string
   directory: string
-  thread: ThreadChannel
+  thread: PlatformThread
   buttons: ActionButtonOption[]
   contextHash: string
   messageId?: string
@@ -105,17 +102,17 @@ export async function waitForQueuedActionButtonsRequest({
   })
 }
 
-function toButtonStyle(color?: ActionButtonColor): ButtonStyle {
+function toPlatformButtonStyle(color?: ActionButtonColor): 'primary' | 'secondary' | 'success' | 'danger' {
   if (color === 'blue') {
-    return ButtonStyle.Primary
+    return 'primary'
   }
   if (color === 'green') {
-    return ButtonStyle.Success
+    return 'success'
   }
   if (color === 'red') {
-    return ButtonStyle.Danger
+    return 'danger'
   }
-  return ButtonStyle.Secondary
+  return 'secondary'
 }
 
 function resolveContext(context: PendingActionButtonsContext): boolean {
@@ -138,15 +135,9 @@ function updateButtonMessage({
   if (!context.messageId) {
     return
   }
-  context.thread.messages
-    .fetch(context.messageId)
-    .then((message) => {
-      return message.edit({
-        content: `**Action Required**\n${status}`,
-        components: [],
-      })
-    })
-    .catch(() => {})
+  context.thread.edit(context.messageId, {
+    content: `**Action Required**\n${status}`,
+  }).catch(() => {})
 }
 
 async function sendClickedActionToModel({
@@ -155,7 +146,7 @@ async function sendClickedActionToModel({
   prompt,
 }: {
   interaction: ButtonInteraction
-  thread: ThreadChannel
+  thread: import('discord.js').ThreadChannel
   prompt: string
 }): Promise<void> {
   const resolved = await resolveWorkingDirectory({ channel: thread })
@@ -165,10 +156,13 @@ async function sendClickedActionToModel({
 
   const username = interaction.user.globalName || interaction.user.username
 
+  // Wrap in DiscordThread for the runtime (which expects PlatformThread)
+  const platformThread = new DiscordThread(thread)
+
   // Action button clicks use opencode queue mode.
   const runtime = getOrCreateRuntime({
     threadId: thread.id,
-    thread,
+    thread: platformThread,
     projectDirectory: resolved.projectDirectory,
     sdkDirectory: resolved.workingDirectory,
     channelId: thread.parentId || thread.id,
@@ -188,7 +182,7 @@ export async function showActionButtons({
   buttons,
   silent,
 }: {
-  thread: ThreadChannel
+  thread: PlatformThread
   sessionId: string
   directory: string
   buttons: ActionButtonOption[]
@@ -233,20 +227,14 @@ export async function showActionButtons({
 
   pendingActionButtonContexts.set(contextHash, context)
 
-  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    ...safeButtons.map((button, index) => {
-      return new ButtonBuilder()
-        .setCustomId(`action_button:${contextHash}:${index}`)
-        .setLabel(button.label)
-        .setStyle(toButtonStyle(button.color))
-    }),
-  )
-
   try {
-    const message = await thread.send({
-      content: '**Action Required**',
-      components: [row],
-      flags: silent ? SILENT_MESSAGE_FLAGS : NOTIFY_MESSAGE_FLAGS,
+    const message = await thread.send('**Action Required**', {
+      flags: silent ? 'silent' : 'notify',
+      buttons: safeButtons.map((button, index) => ({
+        customId: `action_button:${contextHash}:${index}`,
+        label: button.label,
+        style: toPlatformButtonStyle(button.color),
+      })),
     })
 
     context.messageId = message.id

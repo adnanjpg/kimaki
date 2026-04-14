@@ -2,6 +2,7 @@
 // Reproduces the bug where button click interaction acks but the session does not continue.
 
 import { describe, test, expect } from 'vitest'
+import { DiscordThread } from './platform/discord-thread.js'
 import {
   setupQueueAdvancedSuite,
   TEST_USER_ID,
@@ -116,7 +117,7 @@ describe('queue advanced: action buttons', () => {
       }
 
       await showActionButtons({
-        thread: channel,
+        thread: new DiscordThread(channel),
         sessionId: currentSessionId,
         directory: ctx.directories.projectDirectory,
         buttons: [{ label: 'Continue action-buttons flow', color: 'green' }],
@@ -221,7 +222,7 @@ describe('queue advanced: action buttons', () => {
       }
 
       await showActionButtons({
-        thread: channel,
+        thread: new DiscordThread(channel),
         sessionId: currentSessionId,
         directory: ctx.directories.projectDirectory,
         buttons: [{ label: 'Dismiss me', color: 'white' }],

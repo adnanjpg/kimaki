@@ -3,16 +3,13 @@
 // for each question and collects user responses.
 
 import {
-  StringSelectMenuBuilder,
   StringSelectMenuInteraction,
-  ActionRowBuilder,
-  type ThreadChannel,
   MessageFlags,
 } from 'discord.js'
 import crypto from 'node:crypto'
-import { sendThreadMessage, NOTIFY_MESSAGE_FLAGS, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 import { getOpencodeClient } from '../opencode.js'
 import { createLogger, LogPrefix } from '../logger.js'
+import type { PlatformThread } from '../platform/index.js'
 
 const logger = createLogger(LogPrefix.ASK_QUESTION)
 
@@ -34,7 +31,7 @@ export type CancelQuestionResult = 'no-pending' | 'replied' | 'reply-failed'
 type PendingQuestionContext = {
   sessionId: string
   directory: string
-  thread: ThreadChannel
+  thread: PlatformThread
   requestId: string // OpenCode question request ID for replying
   questions: AskUserQuestionInput['questions']
   answers: Record<number, string[]> // questionIndex -> selected labels
@@ -109,7 +106,7 @@ export async function showAskUserQuestionDropdowns({
   input,
   silent,
 }: {
-  thread: ThreadChannel
+  thread: PlatformThread
   sessionId: string
   directory: string
   requestId: string // OpenCode question request ID
@@ -175,8 +172,7 @@ export async function showAskUserQuestionDropdowns({
   for (let i = 0; i < input.questions.length; i++) {
     const q = input.questions[i]!
 
-    // Map options to Discord select menu options
-    // Discord max: 25 options per select menu
+    // Max 25 options per select menu (Discord limit, Telegram uses buttons)
     const options = [
       ...q.options.slice(0, 24).map((opt, optIdx) => ({
         label: opt.label.slice(0, 100),
@@ -192,25 +188,19 @@ export async function showAskUserQuestionDropdowns({
 
     const placeholder =
       options.find((x) => x.label)?.label || 'Select an option'
-    const selectMenu = new StringSelectMenuBuilder()
-      .setCustomId(`ask_question:${contextHash}:${i}`)
-      .setPlaceholder(placeholder)
-      .addOptions(options)
 
-    // Enable multi-select if the question supports it
-    if (q.multiple) {
-      selectMenu.setMinValues(1)
-      selectMenu.setMaxValues(options.length)
-    }
-
-    const actionRow =
-      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
-
-    await thread.send({
-      content: `**${(q.header || '').slice(0, 200)}**\n${q.question.slice(0, 1700)}`,
-      components: [actionRow],
-      flags: silent ? SILENT_MESSAGE_FLAGS : NOTIFY_MESSAGE_FLAGS,
-    })
+    await thread.send(
+      `**${(q.header || '').slice(0, 200)}**\n${q.question.slice(0, 1700)}`,
+      {
+        flags: silent ? 'silent' : 'notify',
+        selectMenus: [{
+          customId: `ask_question:${contextHash}:${i}`,
+          placeholder,
+          options,
+          ...(q.multiple ? { minValues: 1, maxValues: options.length } : {}),
+        }],
+      },
+    )
   }
 
   logger.log(
@@ -324,9 +314,9 @@ async function submitQuestionAnswers(
     )
   } catch (error) {
     logger.error('Failed to submit answers:', error)
-    await sendThreadMessage(
-      context.thread,
+    await context.thread.send(
       `✗ Failed to submit answers: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      { flags: 'notify' },
     )
   }
 }

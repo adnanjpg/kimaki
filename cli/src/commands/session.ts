@@ -10,6 +10,7 @@ import { SILENT_MESSAGE_FLAGS, resolveProjectDirectoryFromAutocomplete } from '.
 import { getOrCreateRuntime } from '../session-handler/thread-session-runtime.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import * as errore from 'errore'
+import { DiscordThread } from '../platform/discord-thread.js'
 
 const logger = createLogger(LogPrefix.SESSION)
 
@@ -81,7 +82,7 @@ export async function handleSessionCommand({
 
     const runtime = getOrCreateRuntime({
       threadId: thread.id,
-      thread,
+      thread: new DiscordThread(thread),
       projectDirectory,
       sdkDirectory: projectDirectory,
       channelId: textChannel.id,

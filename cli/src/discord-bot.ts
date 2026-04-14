@@ -86,6 +86,7 @@ import {
   startExternalOpencodeSessionSync,
   stopExternalOpencodeSessionSync,
 } from './external-opencode-sync.js'
+import { DiscordThread } from './platform/discord-thread.js'
 
 export {
   initDatabase,
@@ -676,7 +677,7 @@ export async function startDiscordBot({
             : resolvedProjectDir
         const runtime = getOrCreateRuntime({
           threadId: thread.id,
-          thread,
+          thread: new DiscordThread(thread),
           projectDirectory: resolvedProjectDir,
           sdkDirectory: sdkDir,
           channelId: parent?.id || undefined,
@@ -878,7 +879,7 @@ export async function startDiscordBot({
 
         const channelRuntime = getOrCreateRuntime({
           threadId: thread.id,
-          thread,
+          thread: new DiscordThread(thread),
           projectDirectory,
           sdkDirectory: projectDirectory,
           channelId: textChannel.id,
@@ -1111,7 +1112,7 @@ export async function startDiscordBot({
 
       const runtime = getOrCreateRuntime({
         threadId: thread.id,
-        thread,
+        thread: new DiscordThread(thread),
         projectDirectory,
         sdkDirectory: projectDirectory,
         channelId: parent.id,

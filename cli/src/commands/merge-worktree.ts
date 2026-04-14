@@ -22,6 +22,7 @@ import {
   getOrCreateRuntime,
 } from '../session-handler/thread-session-runtime.js'
 import { RebaseConflictError, DirtyWorktreeError } from '../errors.js'
+import { DiscordThread } from '../platform/discord-thread.js'
 
 const logger = createLogger(LogPrefix.WORKTREE)
 
@@ -74,7 +75,7 @@ async function sendPromptToModel({
   // Merge prompts use opencode queue mode.
   const runtime = getOrCreateRuntime({
     threadId: thread.id,
-    thread,
+    thread: new DiscordThread(thread),
     projectDirectory: resolved?.projectDirectory || projectDirectory,
     sdkDirectory: resolved?.workingDirectory || projectDirectory,
     channelId: thread.parentId || thread.id,

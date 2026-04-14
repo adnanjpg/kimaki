@@ -3,6 +3,7 @@
 // sufficient — hasPendingInteractiveUi() should NOT block queue drain.
 
 import { describe, test, expect } from 'vitest'
+import { DiscordThread } from './platform/discord-thread.js'
 import {
   setupQueueAdvancedSuite,
   TEST_USER_ID,
@@ -72,7 +73,7 @@ describe('queue drain with pending interactive UI', () => {
       }
 
       await showActionButtons({
-        thread: channel,
+        thread: new DiscordThread(channel),
         sessionId: currentSessionId,
         directory: ctx.directories.projectDirectory,
         buttons: [{ label: 'Pending button', color: 'white' }],

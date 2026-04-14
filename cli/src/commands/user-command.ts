@@ -14,6 +14,7 @@ import { createLogger, LogPrefix } from '../logger.js'
 import { getChannelDirectory, getThreadSession } from '../database.js'
 import { store } from '../store.js'
 import fs from 'node:fs'
+import { DiscordThread } from '../platform/discord-thread.js'
 
 const userCommandLogger = createLogger(LogPrefix.USER_CMD)
 const DISCORD_MESSAGE_LIMIT = 2000
@@ -128,7 +129,7 @@ export const handleUserCommand: CommandHandler = async ({
 
       const runtime = getOrCreateRuntime({
         threadId: thread.id,
-        thread,
+        thread: new DiscordThread(thread),
         projectDirectory,
         sdkDirectory: projectDirectory,
         channelId: textChannel?.id,
@@ -164,7 +165,7 @@ export const handleUserCommand: CommandHandler = async ({
 
       const runtime = getOrCreateRuntime({
         threadId: newThread.id,
-        thread: newThread,
+        thread: new DiscordThread(newThread),
         projectDirectory,
         sdkDirectory: projectDirectory,
         channelId: textChannel.id,

@@ -11,6 +11,7 @@ import { createProjectChannels } from '../channel-management.js'
 import { getOrCreateRuntime } from '../session-handler/thread-session-runtime.js'
 import { SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
+import { DiscordThread } from '../platform/discord-thread.js'
 
 const logger = createLogger(LogPrefix.CREATE_PROJECT)
 
@@ -165,7 +166,7 @@ export async function handleCreateNewProjectCommand({
 
     const runtime = getOrCreateRuntime({
       threadId: thread.id,
-      thread,
+      thread: new DiscordThread(thread),
       projectDirectory,
       sdkDirectory: projectDirectory,
       channelId: textChannel.id,
