@@ -13,6 +13,7 @@ import { handleUndo, handleRedo } from './undo-redo.js'
 import { handleVerbosity } from './verbosity.js'
 import { handleRun } from './run.js'
 import { handleAddProject } from './add-project.js'
+import { handleNewSession } from './newsession.js'
 import { createLogger, LogPrefix } from '../logger.js'
 
 const logger = createLogger(LogPrefix.TELEGRAM)
@@ -35,6 +36,7 @@ export function registerTelegramCommands(bot: Bot): void {
   bot.command('verbosity', wrap(handleVerbosity))
   bot.command('run', wrap(handleRun))
   bot.command('addproject', wrap(handleAddProject))
+  bot.command('newsession', wrap(handleNewSession))
 
   // Register commands in Telegram's menu
   bot.api.setMyCommands([
@@ -50,6 +52,7 @@ export function registerTelegramCommands(bot: Bot): void {
     { command: 'verbosity', description: 'Set output verbosity' },
     { command: 'run', description: 'Run a shell command' },
     { command: 'addproject', description: 'Bind a project directory' },
+    { command: 'newsession', description: 'Start a fresh session' },
   ]).catch((err) => {
     logger.error('Failed to register Telegram commands:', err)
   })
