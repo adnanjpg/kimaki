@@ -15,13 +15,17 @@ export async function handleModel(ctx: Context): Promise<void> {
   if (!client) return
 
   // Get available providers and models
-  const providers = await client.provider.list({
+  const providersResponse = await client.provider.list({
     directory: resolved.projectDirectory,
   })
 
-  const connected = providers.data?.filter((p) =>
-    providers.connected?.includes(p.id),
-  ) || []
+  if (!providersResponse.data) {
+    await ctx.reply('Failed to fetch providers.')
+    return
+  }
+
+  const { all: allProviders, connected: connectedIds } = providersResponse.data
+  const connected = allProviders.filter((p) => connectedIds.includes(p.id))
 
   if (connected.length === 0) {
     await ctx.reply('No AI providers connected. Configure a provider in OpenCode first.')

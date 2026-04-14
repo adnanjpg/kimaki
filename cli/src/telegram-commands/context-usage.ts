@@ -46,7 +46,7 @@ export async function handleContextUsage(ctx: Context): Promise<void> {
   let contextInfo = ''
   try {
     const providers = await client.provider.list({ directory: resolved.projectDirectory })
-    for (const p of providers.data || []) {
+    for (const p of providers.data?.all || []) {
       const model = p.models?.[modelId]
       if (model?.limit?.context) {
         const pct = ((totalTokens / model.limit.context) * 100).toFixed(1)
