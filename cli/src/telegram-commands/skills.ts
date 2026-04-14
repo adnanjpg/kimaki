@@ -16,24 +16,10 @@ export async function handleSkills(ctx: Context): Promise<void> {
     return
   }
 
-  const header = `**Available skills (${skills.length}):**\n\n`
-  const MAX_LEN = 4000 // leave room for header + safety margin
-
-  const lines: string[] = []
-  let totalLen = header.length
-  for (const s of skills) {
-    const desc = s.description ? ` — ${s.description}` : ''
-    const line = `• \`/${s.name}\`${desc}`
-    if (totalLen + line.length + 1 > MAX_LEN) {
-      lines.push(`… and ${skills.length - lines.length} more`)
-      break
-    }
-    lines.push(line)
-    totalLen += line.length + 1
-  }
+  const names = skills.map((s) => `\`/${s.name}\``).join(', ')
 
   await ctx.reply(
-    `${header}${lines.join('\n')}`,
+    `**Skills (${skills.length}):** ${names}`,
     { parse_mode: 'Markdown' },
   )
 }
