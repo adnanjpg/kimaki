@@ -45,6 +45,11 @@ export class TelegramThread implements PlatformThread {
   private readonly topicId: number
   private readonly chatDescription?: string
 
+  /** Only include message_thread_id in API calls when topicId > 0 (real forum topic). */
+  private get threadIdParam(): { message_thread_id: number } | {} {
+    return this.topicId > 0 ? { message_thread_id: this.topicId } : {}
+  }
+
   constructor(opts: TelegramThreadOptions) {
     this.api = opts.api
     this.chatId = opts.chatId
@@ -70,7 +75,7 @@ export class TelegramThread implements PlatformThread {
     // Send content chunks
     for (const chunk of chunks) {
       const result = await this.api.sendMessage(this.chatId, chunk, {
-        message_thread_id: this.topicId,
+        ...this.threadIdParam,
         parse_mode: 'HTML',
         // Telegram has no "silent" flag per se, but we can disable notification
         disable_notification: options?.flags !== 'notify',
@@ -90,7 +95,7 @@ export class TelegramThread implements PlatformThread {
         ? markdownToTelegramHtml(content) || '⠀'
         : '⠀' // invisible braille space — content already sent
       const result = await this.api.sendMessage(this.chatId, keyboardContent, {
-        message_thread_id: this.topicId,
+        ...this.threadIdParam,
         parse_mode: 'HTML',
         reply_markup: keyboard,
         disable_notification: options?.flags !== 'notify',
@@ -104,7 +109,7 @@ export class TelegramThread implements PlatformThread {
     if (options?.files?.length) {
       for (const file of options.files) {
         await this.api.sendDocument(this.chatId, new InputFile(file.data, file.filename), {
-          message_thread_id: this.topicId,
+          ...this.threadIdParam,
           disable_notification: true,
         })
       }
@@ -134,7 +139,7 @@ export class TelegramThread implements PlatformThread {
 
   async sendTyping(): Promise<void> {
     await this.api.sendChatAction(this.chatId, 'typing', {
-      message_thread_id: this.topicId,
+      ...this.threadIdParam,
     }).catch(() => {
       // Typing indicator failures are non-critical
     })
