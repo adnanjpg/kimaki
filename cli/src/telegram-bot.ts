@@ -4,10 +4,10 @@
 
 import { Bot, type Context } from 'grammy'
 import fs from 'node:fs'
+import path from 'node:path'
+import os from 'node:os'
 import * as errore from 'errore'
 import { createLogger, LogPrefix } from './logger.js'
-import { transcribeAudio } from './voice.js'
-import { execAsync } from './worktrees.js'
 import { TelegramThread } from './platform/telegram-thread.js'
 import {
   composeTelegramThreadId,
@@ -22,7 +22,6 @@ import {
   getThreadSession,
   setChannelDirectory,
   getPrisma,
-  getTranscriptionApiKey,
 } from './database.js'
 import { initializeOpencodeForDirectory } from './opencode.js'
 import {
@@ -209,6 +208,7 @@ async function handleDirectMessage({
   username,
   text,
   appId,
+  audioFiles,
 }: {
   ctx: Context
   chatId: number
@@ -216,8 +216,9 @@ async function handleDirectMessage({
   username: string
   text: string
   appId: string
+  audioFiles?: Array<{ type: 'file'; mime: string; filename: string; url: string }>
 }): Promise<void> {
-  if (!text.trim()) {
+  if (!text.trim() && !audioFiles?.length) {
     return
   }
 
@@ -301,6 +302,8 @@ async function handleDirectMessage({
     userId: String(userId),
     username,
     appId,
+    // Audio files passed as file parts (same type as images — FilePartInput)
+    ...(audioFiles?.length ? { images: audioFiles } : {}),
   })
 
   logger.log(
@@ -309,9 +312,10 @@ async function handleDirectMessage({
 }
 
 // ── Voice message handler ────────────────────────────────────────
-// Telegram voice messages (.ogg opus) and audio files are transcribed
-// via the existing transcribeAudio() pipeline (OpenAI / Gemini) and
-// then routed as a normal text prompt.
+// Telegram voice messages (.ogg opus) and audio files are sent directly
+// to OpenCode as file parts. The model connected via the user's existing
+// provider (Copilot, Gemini, etc.) handles transcription + response
+// natively — no separate API key needed.
 
 async function handleVoiceMessage({
   ctx,
@@ -334,28 +338,6 @@ async function handleVoiceMessage({
 
   const chatType = message.chat.type
   const topicId = ('message_thread_id' in message && message.message_thread_id) || 0
-  const threadId = composeTelegramThreadId(chatId, topicId)
-  const channelId = composeTelegramChannelId(chatId)
-
-  // Resolve project directory (same logic as handleDirectMessage)
-  let channelConfig = await getChannelDirectory(channelId)
-  if (!channelConfig) {
-    const prisma = await getPrisma()
-    const anyChannel = await prisma.channel_directories.findFirst()
-    if (anyChannel) {
-      channelConfig = { directory: anyChannel.directory }
-    }
-  }
-  if (!channelConfig) {
-    await ctx.reply('No project directory configured. Use /addproject first.')
-    return
-  }
-  const projectDirectory = channelConfig.directory
-
-  // Tell user we're transcribing
-  await ctx.reply('Transcribing voice message...', {
-    ...(topicId > 0 ? { message_thread_id: topicId } : {}),
-  })
 
   // Download voice file from Telegram
   const file = await ctx.api.getFile(voice.file_id)
@@ -364,8 +346,6 @@ async function handleVoiceMessage({
     return
   }
 
-  // grammy doesn't have a built-in downloadFile that returns a Buffer,
-  // so we fetch it from the Telegram file URL directly.
   const fileUrl = `https://api.telegram.org/file/bot${ctx.api.token}/${file.file_path}`
   const response = await fetch(fileUrl)
   if (!response.ok) {
@@ -373,83 +353,40 @@ async function handleVoiceMessage({
     return
   }
   const audioBuffer = Buffer.from(await response.arrayBuffer())
+  const mimeType = voice.mime_type || 'audio/ogg'
 
-  logger.log(`Downloaded voice message: ${audioBuffer.length} bytes, mime: ${voice.mime_type || 'audio/ogg'}`)
+  logger.log(`Downloaded voice message: ${audioBuffer.length} bytes, mime: ${mimeType}`)
 
-  // Build file tree prompt for better transcription context
-  let transcriptionPrompt = 'Telegram voice message transcription'
-  try {
-    const { stdout } = await execAsync('git ls-files | tree --fromfile -a', {
-      cwd: projectDirectory,
-    })
-    if (stdout) {
-      transcriptionPrompt = stdout
-    }
-  } catch { /* non-critical */ }
+  // Save to temp file so OpenCode can access it via file:// URL
+  const tmpDir = os.tmpdir()
+  const ext = mimeType.includes('ogg') ? '.ogg' : mimeType.includes('mp4') ? '.m4a' : '.audio'
+  const tmpFile = path.join(tmpDir, `kimaki-voice-${Date.now()}${ext}`)
+  fs.writeFileSync(tmpFile, audioBuffer)
 
-  // Resolve transcription API key
-  let transcriptionApiKey: string | undefined
-  let transcriptionProvider: 'openai' | 'gemini' | undefined
-  const stored = await getTranscriptionApiKey(appId)
-  if (stored) {
-    transcriptionApiKey = stored.apiKey
-    transcriptionProvider = stored.provider
-  }
-  if (!transcriptionApiKey) {
-    if (process.env.OPENAI_API_KEY) {
-      transcriptionApiKey = process.env.OPENAI_API_KEY
-      transcriptionProvider = 'openai'
-    } else if (process.env.GEMINI_API_KEY) {
-      transcriptionApiKey = process.env.GEMINI_API_KEY
-      transcriptionProvider = 'gemini'
-    }
+  // Build the audio file part for OpenCode
+  const audioFilePart = {
+    type: 'file' as const,
+    mime: mimeType,
+    filename: `voice${ext}`,
+    url: `file://${tmpFile}`,
   }
 
-  if (!transcriptionApiKey) {
-    await ctx.reply(
-      'Voice transcription requires an API key. Set OPENAI_API_KEY or GEMINI_API_KEY environment variable, or use /login.',
-      { ...(topicId > 0 ? { message_thread_id: topicId } : {}) },
-    )
-    return
-  }
+  // Caption text (if any) + instruction for the model
+  const caption = message.caption || ''
+  const prompt = caption
+    ? `[Voice message attached] ${caption}`
+    : '[Voice message attached — transcribe and respond to the audio]'
 
-  // Transcribe
-  const result = await transcribeAudio({
-    audio: audioBuffer,
-    prompt: transcriptionPrompt,
-    apiKey: transcriptionApiKey,
-    provider: transcriptionProvider,
-    mediaType: voice.mime_type || 'audio/ogg',
-  })
-
-  if (result instanceof Error) {
-    logger.error(`Voice transcription failed:`, result)
-    await ctx.reply(`Transcription failed: ${result.message}`, {
-      ...(topicId > 0 ? { message_thread_id: topicId } : {}),
-    })
-    return
-  }
-
-  const { transcription: text, queueMessage, agent } = result
-  logger.log(
-    `Voice transcribed: "${text.slice(0, 80)}"${queueMessage ? ' [QUEUE]' : ''}${agent ? ` [AGENT:${agent}]` : ''}`,
-  )
-
-  // Show transcription to user
-  await ctx.reply(`Transcribed: ${text}`, {
-    ...(topicId > 0 ? { message_thread_id: topicId } : {}),
-  })
-
-  // Route the transcribed text through the normal message handler
-  // Determine chat type and route accordingly
+  // Route through the normal handlers, passing audio as a file part
   if (chatType === 'private' || chatType === 'group' || topicId === 0) {
     await handleDirectMessage({
       ctx,
       chatId,
       userId,
       username,
-      text,
+      text: prompt,
       appId,
+      audioFiles: [audioFilePart],
     })
   } else {
     await handleTopicMessage({
@@ -458,10 +395,16 @@ async function handleVoiceMessage({
       topicId,
       userId,
       username,
-      text,
+      text: prompt,
       appId,
+      audioFiles: [audioFilePart],
     })
   }
+
+  // Clean up temp file after a delay (give OpenCode time to read it)
+  setTimeout(() => {
+    fs.unlink(tmpFile, () => {})
+  }, 60_000)
 }
 
 // ── Topic message handler ────────────────────────────────────────
@@ -474,6 +417,7 @@ async function handleTopicMessage({
   username,
   text,
   appId,
+  audioFiles,
 }: {
   ctx: Context
   chatId: number
@@ -482,6 +426,7 @@ async function handleTopicMessage({
   username: string
   text: string
   appId: string
+  audioFiles?: Array<{ type: 'file'; mime: string; filename: string; url: string }>
 }): Promise<void> {
   const threadId = composeTelegramThreadId(chatId, topicId)
 
@@ -565,7 +510,7 @@ async function handleTopicMessage({
     })
   }
 
-  if (!text.trim()) {
+  if (!text.trim() && !audioFiles?.length) {
     return
   }
 
@@ -574,6 +519,7 @@ async function handleTopicMessage({
     userId: String(userId),
     username,
     appId,
+    ...(audioFiles?.length ? { images: audioFiles } : {}),
   })
 }
 
