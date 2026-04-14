@@ -8,7 +8,7 @@ export async function handleAbort(ctx: Context): Promise<void> {
 
   const runtime = getRuntime(resolved.threadId)
   if (runtime) {
-    runtime.abortActiveRun({ reason: 'user /abort command' })
+    runtime.abortActiveRun('user /abort command')
   }
 
   if (resolved.sessionId) {

@@ -17,10 +17,10 @@ export async function handleCompact(ctx: Context): Promise<void> {
     directory: resolved.projectDirectory,
   })
   const lastAssistant = [...(messages.data || [])].reverse().find(
-    (m) => m.role === 'assistant' && m.info?.model,
+    (m) => m.info.role === 'assistant',
   )
-  const provider = lastAssistant?.info?.model?.providerID
-  const model = lastAssistant?.info?.model?.modelID
+  const provider = lastAssistant?.info.role === 'assistant' ? lastAssistant.info.providerID : undefined
+  const model = lastAssistant?.info.role === 'assistant' ? lastAssistant.info.modelID : undefined
 
   if (!provider || !model) {
     await ctx.reply('Cannot determine model for compaction. Send a message first.')

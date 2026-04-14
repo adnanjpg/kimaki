@@ -56,7 +56,7 @@ export async function resolveContext(ctx: Context): Promise<ResolvedContext | nu
     return null
   }
 
-  const sessionId = await getThreadSession(threadId)
+  const sessionId = await getThreadSession(threadId) ?? null
 
   return {
     chatId,

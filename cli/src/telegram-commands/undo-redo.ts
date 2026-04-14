@@ -33,7 +33,7 @@ export async function handleUndo(ctx: Context): Promise<void> {
   const msgList = messages.data || []
 
   // Find the last assistant message to revert to
-  const lastAssistant = [...msgList].reverse().find((m) => m.role === 'assistant')
+  const lastAssistant = [...msgList].reverse().find((m) => m.info.role === 'assistant')
   if (!lastAssistant) {
     await ctx.reply('Nothing to undo — no assistant messages found.')
     return
@@ -42,11 +42,11 @@ export async function handleUndo(ctx: Context): Promise<void> {
   const result = await client.session.revert({
     sessionID: resolved.sessionId,
     directory: resolved.projectDirectory,
-    messageID: lastAssistant.id,
+    messageID: lastAssistant.info.id,
   })
 
-  const diffSnippet = result.data?.diff
-    ? `\n<pre>${result.data.diff.slice(0, 500)}</pre>`
+  const diffSnippet = result.data?.revert?.diff
+    ? `\n<pre>${result.data.revert.diff.slice(0, 500)}</pre>`
     : ''
   await ctx.reply(`Undone — reverted last assistant message.${diffSnippet}`, {
     parse_mode: 'HTML',

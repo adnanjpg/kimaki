@@ -15,8 +15,8 @@ export async function handleShare(ctx: Context): Promise<void> {
     sessionID: resolved.sessionId,
   })
 
-  if (result.data?.url) {
-    await ctx.reply(`Session shared: ${result.data.url}`)
+  if (result.data?.share?.url) {
+    await ctx.reply(`Session shared: ${result.data.share.url}`)
   } else {
     await ctx.reply('Failed to create share link.')
   }

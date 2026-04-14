@@ -25,18 +25,21 @@ export async function handleContextUsage(ctx: Context): Promise<void> {
   let modelId = ''
 
   for (const msg of messages.data || []) {
-    if (msg.info?.tokens) {
-      totalInput += msg.info.tokens.input || 0
-      totalOutput += msg.info.tokens.output || 0
-      totalReasoning += msg.info.tokens.reasoning || 0
-      totalCacheRead += msg.info.tokens.cache?.read || 0
-      totalCacheWrite += msg.info.tokens.cache?.write || 0
-    }
-    if (msg.info?.cost) {
-      totalCost += msg.info.cost
-    }
-    if (msg.info?.model?.modelID) {
-      modelId = msg.info.model.modelID
+    if (msg.info.role === 'assistant') {
+      const info = msg.info
+      if (info.tokens) {
+        totalInput += info.tokens.input || 0
+        totalOutput += info.tokens.output || 0
+        totalReasoning += info.tokens.reasoning || 0
+        totalCacheRead += info.tokens.cache?.read || 0
+        totalCacheWrite += info.tokens.cache?.write || 0
+      }
+      if (info.cost) {
+        totalCost += info.cost
+      }
+      if (info.modelID) {
+        modelId = info.modelID
+      }
     }
   }
 
