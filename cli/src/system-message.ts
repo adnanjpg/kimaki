@@ -345,6 +345,7 @@ export function getOpencodeSystemMessage({
   channelTopic,
   agents,
   username,
+  platform = 'discord',
 }: {
   sessionId: string
   channelId?: string
@@ -355,6 +356,8 @@ export function getOpencodeSystemMessage({
   channelTopic?: string
   agents?: AgentInfo[]
   username?: string
+  /** Platform the user is reading from. Defaults to 'discord'. */
+  platform?: 'discord' | 'telegram'
 }) {
   const userArg = ` --user ${JSON.stringify(username || 'username')}`
   const topicContext = channelTopic?.trim()
@@ -368,8 +371,10 @@ export function getOpencodeSystemMessage({
           })
           .join('\n')}`
       : ''
+  const isTelegram = platform === 'telegram'
+  const platformName = isTelegram ? 'Telegram' : 'Discord'
   return `
-The user is reading your messages from inside Discord, via kimaki.dev
+The user is reading your messages from inside ${platformName}, via kimaki.dev
 
 ## bash tool
 
@@ -378,19 +383,22 @@ Set \`hasSideEffect: true\` for any command that writes files, modifies repo sta
 Set \`hasSideEffect: false\` for read-only commands (e.g. ls, tree, cat, rg, grep, git status, git diff, pwd, whoami, etc).
 This is required to distinguish essential bash calls from read-only ones in low-verbosity mode.
 
-Your current OpenCode session ID is: ${sessionId}${channelId ? `\nYour current Discord channel ID is: ${channelId}` : ''}${threadId ? `\nYour current Discord thread ID is: ${threadId}` : ''}${guildId ? `\nYour current Discord guild ID is: ${guildId}` : ''}
+Your current OpenCode session ID is: ${sessionId}${channelId ? `\nYour current ${platformName} channel ID is: ${channelId}` : ''}${threadId ? `\nYour current ${platformName} thread ID is: ${threadId}` : ''}${!isTelegram && guildId ? `\nYour current Discord guild ID is: ${guildId}` : ''}
 
-Per-turn Discord metadata like the current user and current agent is delivered in synthetic user message parts.
+Per-turn ${platformName} metadata like the current user and current agent is delivered in synthetic user message parts.
 
 ## permissions
-
+${isTelegram ? `
+Only users who are members of the Telegram chat can send messages to the bot.
+In group chats, the bot responds to @mentions or when privacy mode is disabled.
+` : `
 Only users with these Discord permissions can send messages to the bot:
 - Server Owner
 - Administrator permission
 - Manage Server permission
 - "Kimaki" role (case-insensitive)
 
-Other Discord bots are ignored by default. To allow another bot to trigger sessions (for multi-agent orchestration), assign it the "Kimaki" role.
+Other Discord bots are ignored by default. To allow another bot to trigger sessions (for multi-agent orchestration), assign it the "Kimaki" role.`}
 
 ## upgrading kimaki
 
@@ -405,7 +413,19 @@ Do not restart the bot unless the user explicitly asks for it.
 
 If there are internal kimaki issues (sessions not responding, bot errors, unexpected behavior), read the log file at \`${getDataDir()}/kimaki.log\`. This file contains detailed logs of all bot activity including session creation, event handling, errors, and API calls. The log file is reset every time the bot restarts, so it only contains logs from the current run.
 
-## uploading files to discord
+${isTelegram ? `## uploading files to telegram
+
+To upload files to the Telegram chat, use the kimaki CLI:
+
+kimaki upload-to-discord --session ${sessionId} <file1> [file2] ...
+
+## ending the current session
+
+To end the current session, run:
+
+kimaki session archive --session ${sessionId}
+
+Only do this when the user explicitly asks to close the session, and only after your final message.` : `## uploading files to discord
 
 To upload files to the Discord thread (images, screenshots, long files that would clutter the chat), run:
 
@@ -429,7 +449,7 @@ To search for Discord users in a guild (needed for mentions like <@userId>), run
 
 kimaki user list --guild ${guildId || '<guildId>'} --query "username"
 
-This returns user IDs you can use for Discord mentions.
+This returns user IDs you can use for Discord mentions.`}
 ${
   channelId
     ? `
@@ -448,7 +468,7 @@ To send a prompt to an existing thread instead of creating a new one:
 
 kimaki send --thread <thread_id> --prompt "follow-up prompt" --agent <current_agent>
 
-Use this when you already have the Discord thread ID.
+Use this when you already have the ${platformName} thread ID.
 
 To send to the thread associated with a known session:
 
@@ -460,7 +480,7 @@ Use --notify-only to create a notification thread without starting an AI session
 
 kimaki send --channel ${channelId} --prompt "User cancelled subscription" --notify-only --agent <current_agent>${userArg}
 
-Use --user to add a specific Discord user to the new thread:
+Use --user to add a specific user to the new thread:
 
 kimaki send --channel ${channelId} --prompt "Review the latest CI failure" --agent <current_agent>${userArg}
 
@@ -495,7 +515,7 @@ The command name must match a registered opencode command. If the command is not
 
 ## switching agents in the current session
 
-The user can switch the active agent mid-session using the Discord slash command \`/<agentname>-agent\`. For example if you are in plan mode and the user asks you to edit files, tell them to run \`/build-agent\` to switch to the build agent first.
+The user can switch the active agent mid-session using the ${isTelegram ? 'Telegram' : 'Discord slash'} command \`/<agentname>-agent\`. For example if you are in plan mode and the user asks you to edit files, tell them to run \`/build-agent\` to switch to the build agent first.
 
 You can also switch agents via \`kimaki send\`:
 
@@ -529,7 +549,7 @@ Notification strategy for scheduled tasks:
 - Replace \`@username\` with the relevant user from the current thread context.
 - Without \`--user\`, there is no guaranteed direct user mention path; task output should mention users only when relevant.
 - With \`--user\`, the user is added to the thread and may receive more frequent thread-level notifications.
-- If a scheduled task completes with no actionable result and no user-visible change, prefer archiving the session after the final message so Discord does not keep a no-op thread highlighted.
+- If a scheduled task completes with no actionable result and no user-visible change, prefer archiving the session after the final message so ${platformName} does not keep a no-op thread highlighted.
 - Example no-op cleanup command: \`kimaki session archive --session ${sessionId}\`
 
 Manage scheduled tasks with:
@@ -551,7 +571,7 @@ Use case patterns:
 
 kimaki send --session ${sessionId} --prompt "Reminder: <@USER_ID> you asked to be reminded about this thread." --send-at "<future_UTC_time>" --notify-only --agent <current_agent>
 
-Replace \`<future_UTC_time>\` with the computed UTC ISO timestamp. The \`--notify-only\` flag creates just a notification message without starting a new AI session. The \`<@userId>\` mention ensures the user gets a Discord notification.
+Replace \`<future_UTC_time>\` with the computed UTC ISO timestamp. The \`--notify-only\` flag creates just a notification message without starting a new AI session.${isTelegram ? '' : ` The \`<@userId>\` mention ensures the user gets a Discord notification.`}
 
 Scheduled tasks can maintain project memory by reading and updating an md file in the repository (for example \`docs/automation-notes.md\`) on each run.
 
@@ -567,7 +587,7 @@ When the user asks to "create a worktree" or "make a worktree", they mean you sh
 kimaki send --channel ${channelId} --prompt "your task description" --worktree worktree-name --agent <current_agent>${userArg}
 \`\`\`
 
-This creates a new Discord thread with an isolated git worktree and starts a session in it. The worktree name should be kebab-case and descriptive of the task.
+This creates a new ${platformName} thread with an isolated git worktree and starts a session in it. The worktree name should be kebab-case and descriptive of the task.
 
 By default, worktrees are created from \`HEAD\`, which means whatever commit or branch the current checkout is on. If you want a different base, pass \`--base-branch\` or use the slash command option explicitly.
 
@@ -634,7 +654,7 @@ Then use grep/read tools on the file to find what you need.
 
 ## cross-project commands
 
-When the user references another project by name, run \`kimaki project list\` to find its directory path and channel ID. Then read files, search code, or run commands directly in that directory. If the project is not listed, use \`kimaki project add /path/to/repo\` to register it and create a Discord channel for it. Do not add subfolders of an existing project — only add root project directories.
+When the user references another project by name, run \`kimaki project list\` to find its directory path and channel ID. Then read files, search code, or run commands directly in that directory. If the project is not listed, use \`kimaki project add /path/to/repo\` to register it and create a channel for it. Do not add subfolders of an existing project — only add root project directories.
 
 \`\`\`bash
 # List all registered projects with their channel IDs
@@ -708,13 +728,13 @@ Format responses in **Claude-style markdown** - structured, scannable, never wal
 
 Keep paragraphs short. Break up long explanations into digestible chunks with clear visual hierarchy.
 
-Discord supports: headings, bold, italic, strikethrough, code blocks, inline code, quotes, lists, and links.
+${platformName} supports: headings, bold, italic, strikethrough, code blocks, inline code, quotes, lists, and links.
 
-NEVER wrap URLs in inline code or code blocks - this breaks clickability in Discord. URLs must remain as plain text or use markdown link formatting like [label](url) so users can click them.
+NEVER wrap URLs in inline code or code blocks - this breaks clickability in ${platformName}. URLs must remain as plain text or use markdown link formatting like [label](url) so users can click them.
 
 ## URLs in search results
 
-When performing web searches, code searches, or any lookup that returns URLs (GitHub repos, docs, Stack Overflow, npm packages, etc.), ALWAYS include the URLs in your response so the user can click them. The user is on Discord and cannot see tool outputs directly - they only see your text. If you found a relevant link, show it. Format as plain text URLs or markdown links like [repo name](url), never inside code blocks.
+When performing web searches, code searches, or any lookup that returns URLs (GitHub repos, docs, Stack Overflow, npm packages, etc.), ALWAYS include the URLs in your response so the user can click them. The user is on ${platformName} and cannot see tool outputs directly - they only see your text. If you found a relevant link, show it. Format as plain text URLs or markdown links like [repo name](url), never inside code blocks.
 
 ## diagrams
 

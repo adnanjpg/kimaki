@@ -115,7 +115,7 @@ describe('system-message', () => {
 
       kimaki send --channel chan_123 --prompt "User cancelled subscription" --notify-only --agent <current_agent> --user "Tommy"
 
-      Use --user to add a specific Discord user to the new thread:
+      Use --user to add a specific user to the new thread:
 
       kimaki send --channel chan_123 --prompt "Review the latest CI failure" --agent <current_agent> --user "Tommy"
 
@@ -293,7 +293,7 @@ describe('system-message', () => {
 
       ## cross-project commands
 
-      When the user references another project by name, run \`kimaki project list\` to find its directory path and channel ID. Then read files, search code, or run commands directly in that directory. If the project is not listed, use \`kimaki project add /path/to/repo\` to register it and create a Discord channel for it. Do not add subfolders of an existing project — only add root project directories.
+      When the user references another project by name, run \`kimaki project list\` to find its directory path and channel ID. Then read files, search code, or run commands directly in that directory. If the project is not listed, use \`kimaki project add /path/to/repo\` to register it and create a channel for it. Do not add subfolders of an existing project — only add root project directories.
 
       \`\`\`bash
       # List all registered projects with their channel IDs
