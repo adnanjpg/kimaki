@@ -4715,7 +4715,7 @@ cli
         const { startTelegramBot, bindTelegramChat } = await import('./telegram-bot.js')
 
         // ── Step 1: Bot token ────────────────────────────────────
-        let resolvedToken = options.token || process.env.KIMAKI_TELEGRAM_TOKEN || ''
+        let resolvedToken = options.token || process.env.KIMAKI_TELEGRAM_TOKEN || process.env.TELEGRAM_BOT_TOKEN || ''
 
         if (!resolvedToken) {
           if (!canUseInteractivePrompts()) {
