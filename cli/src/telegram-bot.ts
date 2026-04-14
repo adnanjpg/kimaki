@@ -6,6 +6,8 @@ import { Bot, type Context } from 'grammy'
 import fs from 'node:fs'
 import * as errore from 'errore'
 import { createLogger, LogPrefix } from './logger.js'
+import { transcribeAudio } from './voice.js'
+import { execAsync } from './worktrees.js'
 import { TelegramThread } from './platform/telegram-thread.js'
 import {
   composeTelegramThreadId,
@@ -20,6 +22,7 @@ import {
   getThreadSession,
   setChannelDirectory,
   getPrisma,
+  getTranscriptionApiKey,
 } from './database.js'
 import { initializeOpencodeForDirectory } from './opencode.js'
 import {
@@ -127,6 +130,14 @@ async function handleTelegramMessage(ctx: Context, appId: string, botUsername: s
 
   const userId = message.from.id
   const username = getTelegramDisplayName(message.from)
+
+  // ── Voice message handling ────────────────────────────────────
+  // Telegram voice messages (.ogg opus) are transcribed to text before processing.
+  if (message.voice || message.audio) {
+    await handleVoiceMessage({ ctx, chatId, userId, username, appId, botUsername })
+    return
+  }
+
   // Strip @botname mention from the text so the prompt is clean
   let text = extractMessageText(message)
   if (botUsername) {
@@ -295,6 +306,162 @@ async function handleDirectMessage({
   logger.log(
     `DM session for ${username}: "${text.slice(0, 50)}..."`,
   )
+}
+
+// ── Voice message handler ────────────────────────────────────────
+// Telegram voice messages (.ogg opus) and audio files are transcribed
+// via the existing transcribeAudio() pipeline (OpenAI / Gemini) and
+// then routed as a normal text prompt.
+
+async function handleVoiceMessage({
+  ctx,
+  chatId,
+  userId,
+  username,
+  appId,
+  botUsername,
+}: {
+  ctx: Context
+  chatId: number
+  userId: number
+  username: string
+  appId: string
+  botUsername: string
+}): Promise<void> {
+  const message = ctx.message!
+  const voice = message.voice || message.audio
+  if (!voice) return
+
+  const chatType = message.chat.type
+  const topicId = ('message_thread_id' in message && message.message_thread_id) || 0
+  const threadId = composeTelegramThreadId(chatId, topicId)
+  const channelId = composeTelegramChannelId(chatId)
+
+  // Resolve project directory (same logic as handleDirectMessage)
+  let channelConfig = await getChannelDirectory(channelId)
+  if (!channelConfig) {
+    const prisma = await getPrisma()
+    const anyChannel = await prisma.channel_directories.findFirst()
+    if (anyChannel) {
+      channelConfig = { directory: anyChannel.directory }
+    }
+  }
+  if (!channelConfig) {
+    await ctx.reply('No project directory configured. Use /addproject first.')
+    return
+  }
+  const projectDirectory = channelConfig.directory
+
+  // Tell user we're transcribing
+  await ctx.reply('Transcribing voice message...', {
+    ...(topicId > 0 ? { message_thread_id: topicId } : {}),
+  })
+
+  // Download voice file from Telegram
+  const file = await ctx.api.getFile(voice.file_id)
+  if (!file.file_path) {
+    await ctx.reply('Failed to download voice message.')
+    return
+  }
+
+  // grammy doesn't have a built-in downloadFile that returns a Buffer,
+  // so we fetch it from the Telegram file URL directly.
+  const fileUrl = `https://api.telegram.org/file/bot${ctx.api.token}/${file.file_path}`
+  const response = await fetch(fileUrl)
+  if (!response.ok) {
+    await ctx.reply('Failed to download voice message.')
+    return
+  }
+  const audioBuffer = Buffer.from(await response.arrayBuffer())
+
+  logger.log(`Downloaded voice message: ${audioBuffer.length} bytes, mime: ${voice.mime_type || 'audio/ogg'}`)
+
+  // Build file tree prompt for better transcription context
+  let transcriptionPrompt = 'Telegram voice message transcription'
+  try {
+    const { stdout } = await execAsync('git ls-files | tree --fromfile -a', {
+      cwd: projectDirectory,
+    })
+    if (stdout) {
+      transcriptionPrompt = stdout
+    }
+  } catch { /* non-critical */ }
+
+  // Resolve transcription API key
+  let transcriptionApiKey: string | undefined
+  let transcriptionProvider: 'openai' | 'gemini' | undefined
+  const stored = await getTranscriptionApiKey(appId)
+  if (stored) {
+    transcriptionApiKey = stored.apiKey
+    transcriptionProvider = stored.provider
+  }
+  if (!transcriptionApiKey) {
+    if (process.env.OPENAI_API_KEY) {
+      transcriptionApiKey = process.env.OPENAI_API_KEY
+      transcriptionProvider = 'openai'
+    } else if (process.env.GEMINI_API_KEY) {
+      transcriptionApiKey = process.env.GEMINI_API_KEY
+      transcriptionProvider = 'gemini'
+    }
+  }
+
+  if (!transcriptionApiKey) {
+    await ctx.reply(
+      'Voice transcription requires an API key. Set OPENAI_API_KEY or GEMINI_API_KEY environment variable, or use /login.',
+      { ...(topicId > 0 ? { message_thread_id: topicId } : {}) },
+    )
+    return
+  }
+
+  // Transcribe
+  const result = await transcribeAudio({
+    audio: audioBuffer,
+    prompt: transcriptionPrompt,
+    apiKey: transcriptionApiKey,
+    provider: transcriptionProvider,
+    mediaType: voice.mime_type || 'audio/ogg',
+  })
+
+  if (result instanceof Error) {
+    logger.error(`Voice transcription failed:`, result)
+    await ctx.reply(`Transcription failed: ${result.message}`, {
+      ...(topicId > 0 ? { message_thread_id: topicId } : {}),
+    })
+    return
+  }
+
+  const { transcription: text, queueMessage, agent } = result
+  logger.log(
+    `Voice transcribed: "${text.slice(0, 80)}"${queueMessage ? ' [QUEUE]' : ''}${agent ? ` [AGENT:${agent}]` : ''}`,
+  )
+
+  // Show transcription to user
+  await ctx.reply(`Transcribed: ${text}`, {
+    ...(topicId > 0 ? { message_thread_id: topicId } : {}),
+  })
+
+  // Route the transcribed text through the normal message handler
+  // Determine chat type and route accordingly
+  if (chatType === 'private' || chatType === 'group' || topicId === 0) {
+    await handleDirectMessage({
+      ctx,
+      chatId,
+      userId,
+      username,
+      text,
+      appId,
+    })
+  } else {
+    await handleTopicMessage({
+      ctx,
+      chatId,
+      topicId,
+      userId,
+      username,
+      text,
+      appId,
+    })
+  }
 }
 
 // ── Topic message handler ────────────────────────────────────────
