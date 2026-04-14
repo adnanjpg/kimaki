@@ -472,7 +472,16 @@ async function handleTopicMessage({
   if (!existingRuntime && !hasExistingSession) {
     // Unknown topic — try to see if the parent chat has a project directory
     const channelId = composeTelegramChannelId(chatId)
-    const channelConfig = await getChannelDirectory(channelId)
+    let channelConfig = await getChannelDirectory(channelId)
+
+    if (!channelConfig) {
+      // Fallback: use any configured project directory (same as DM handler)
+      const prisma = await getPrisma()
+      const anyChannel = await prisma.channel_directories.findFirst()
+      if (anyChannel) {
+        channelConfig = { directory: anyChannel.directory }
+      }
+    }
 
     if (!channelConfig) {
       logger.log(`Ignoring message in topic ${topicId}: no project directory configured for chat ${chatId}`)
@@ -495,7 +504,14 @@ async function handleTopicMessage({
 
   // Route to existing runtime
   const channelId = composeTelegramChannelId(chatId)
-  const channelConfig = await getChannelDirectory(channelId)
+  let channelConfig = await getChannelDirectory(channelId)
+  if (!channelConfig) {
+    const prisma = await getPrisma()
+    const anyChannel = await prisma.channel_directories.findFirst()
+    if (anyChannel) {
+      channelConfig = { directory: anyChannel.directory }
+    }
+  }
   if (!channelConfig) {
     return
   }
