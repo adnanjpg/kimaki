@@ -71,30 +71,35 @@ export class TelegramThread implements PlatformThread {
   async send(content: string, options?: SendOptions): Promise<SendResult> {
     const chunks = formatForTelegram(content)
     let firstMessageId: number | undefined
+    // When a keyboard is attached, track its message ID so callers can edit it later.
+    let keyboardMessageId: number | undefined
 
-    // Send content chunks
-    for (const chunk of chunks) {
-      const result = await this.api.sendMessage(this.chatId, chunk, {
+    // Build inline keyboard from buttons/select menus (if any)
+    const keyboard = buildInlineKeyboard(options?.buttons, options?.selectMenus)
+
+    // Send content chunks — attach keyboard to the last chunk so buttons
+    // appear directly below the message text in a single Telegram message.
+    for (let i = 0; i < chunks.length; i++) {
+      const isLast = i === chunks.length - 1
+      const result = await this.api.sendMessage(this.chatId, chunks[i], {
         ...this.threadIdParam,
         parse_mode: 'HTML',
-        // Telegram has no "silent" flag per se, but we can disable notification
         disable_notification: options?.flags !== 'notify',
+        ...(isLast && keyboard ? { reply_markup: keyboard } : {}),
       })
       if (!firstMessageId) {
         firstMessageId = result.message_id
       }
+      if (isLast && keyboard) {
+        keyboardMessageId = result.message_id
+      }
     }
 
-    // If buttons or select menus are requested, send them as a separate message
-    // with an inline keyboard (Telegram attaches keyboards to a single message)
-    const keyboard = buildInlineKeyboard(options?.buttons, options?.selectMenus)
-    if (keyboard) {
-      // Telegram attaches keyboards to a single message. If content was already
-      // sent above, send a standalone keyboard message with an invisible space.
-      const keyboardContent = chunks.length === 0
-        ? markdownToTelegramHtml(content) || '⠀'
-        : '⠀' // invisible braille space — content already sent
-      const result = await this.api.sendMessage(this.chatId, keyboardContent, {
+    // If there were no content chunks but we have a keyboard, send it with
+    // the raw content converted to HTML.
+    if (chunks.length === 0 && keyboard) {
+      const fallbackContent = markdownToTelegramHtml(content) || 'Action required'
+      const result = await this.api.sendMessage(this.chatId, fallbackContent, {
         ...this.threadIdParam,
         parse_mode: 'HTML',
         reply_markup: keyboard,
@@ -103,6 +108,7 @@ export class TelegramThread implements PlatformThread {
       if (!firstMessageId) {
         firstMessageId = result.message_id
       }
+      keyboardMessageId = result.message_id
     }
 
     // Handle file uploads
@@ -115,7 +121,9 @@ export class TelegramThread implements PlatformThread {
       }
     }
 
-    return { id: String(firstMessageId || 0) }
+    // Return the keyboard message ID when present — callers (e.g. permission
+    // handler) need to edit the message that holds the inline keyboard.
+    return { id: String(keyboardMessageId || firstMessageId || 0) }
   }
 
   async edit(messageId: string, options: EditOptions): Promise<void> {
