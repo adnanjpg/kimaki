@@ -66,6 +66,10 @@ export async function startTelegramBot(opts: TelegramBotOptions): Promise<Bot> {
   botUsername = me.username || ''
   logger.log(`Telegram bot logged in as @${botUsername} (${me.id})`)
 
+  // ── Commands ────────────────────────────────────────────────
+  const { registerTelegramCommands } = await import('./telegram-commands/index.js')
+  registerTelegramCommands(bot)
+
   // ── Message handler ──────────────────────────────────────────
   // Routes messages from DMs, groups, and supergroup forum topics
   bot.on('message', async (ctx) => {
@@ -564,6 +568,27 @@ async function handleCallbackQuery(ctx: Context): Promise<void> {
   // Question select: "ask_question:{hash}:{questionIdx}:{optionValue}"
   if (data.startsWith('ask_question:')) {
     await handleTelegramQuestionCallback(ctx, data)
+    return
+  }
+
+  // Model selection: "model:provider/modelId"
+  if (data.startsWith('model:')) {
+    const { handleModelCallback } = await import('./telegram-commands/model.js')
+    await handleModelCallback(ctx, data)
+    return
+  }
+
+  // Agent selection: "agent:agentName"
+  if (data.startsWith('agent:')) {
+    const { handleAgentCallback } = await import('./telegram-commands/agent.js')
+    await handleAgentCallback(ctx, data)
+    return
+  }
+
+  // Verbosity selection: "verbosity:level"
+  if (data.startsWith('verbosity:')) {
+    const { handleVerbosityCallback } = await import('./telegram-commands/verbosity.js')
+    await handleVerbosityCallback(ctx, data)
     return
   }
 
