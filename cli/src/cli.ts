@@ -4683,6 +4683,199 @@ cli
     },
   )
 
+// ── Telegram subcommand ──────────────────────────────────────────
+// Interactive onboarding wizard for the Telegram bot.
+// Guides the user step-by-step: create bot → paste token → pick directory → run.
+// Also accepts env vars (KIMAKI_TELEGRAM_TOKEN) for headless/CI use.
+
+cli
+  .command(
+    'telegram',
+    'Set up and run the Kimaki Telegram bot',
+  )
+  .option(
+    '--token <token>',
+    'Telegram bot token (or set KIMAKI_TELEGRAM_TOKEN env var)',
+  )
+  .option(
+    '--data-dir <path>',
+    'Data directory for config and database (default: ~/.kimaki)',
+  )
+  .action(
+    async (options: {
+      token?: string
+      dataDir?: string
+    }) => {
+      try {
+        if (options.dataDir) {
+          setDataDir(options.dataDir)
+        }
+        initLogFile(getDataDir())
+
+        const { startTelegramBot, bindTelegramChat } = await import('./telegram-bot.js')
+
+        // ── Step 1: Bot token ────────────────────────────────────
+        let resolvedToken = options.token || process.env.KIMAKI_TELEGRAM_TOKEN || ''
+
+        if (!resolvedToken) {
+          if (!canUseInteractivePrompts()) {
+            cliLogger.error(
+              'No Telegram bot token found.\n' +
+              'Set KIMAKI_TELEGRAM_TOKEN env var or pass --token <token>.',
+            )
+            process.exit(EXIT_NO_RESTART)
+          }
+
+          intro('Kimaki Telegram Bot Setup')
+
+          note(
+            'To create a Telegram bot:\n' +
+            '\n' +
+            '1. Open Telegram and search for @BotFather\n' +
+            '2. Send /newbot and follow the prompts\n' +
+            '3. Copy the bot token it gives you\n' +
+            '\n' +
+            'The token looks like: 123456789:ABCdefGHI...',
+            'Step 1: Create a bot',
+          )
+
+          const tokenInput = await password({
+            message: 'Paste your bot token:',
+          })
+          if (isCancel(tokenInput) || !tokenInput) {
+            cancel('Setup cancelled')
+            process.exit(0)
+          }
+          resolvedToken = stripBracketedPaste(String(tokenInput))
+        }
+
+        // Validate token
+        const s = spinner()
+        s.start('Validating bot token...')
+        const { Bot } = await import('grammy')
+        const testBot = new Bot(resolvedToken)
+        const me = await testBot.api.getMe().catch((err: Error) => {
+          s.stop('Invalid token')
+          cliLogger.error(`Token validation failed: ${err.message}`)
+          process.exit(EXIT_NO_RESTART)
+        })
+        s.stop(`Connected as @${me.username}`)
+
+        // ── Step 2: Project directory ────────────────────────────
+        let projectDirectory: string
+
+        if (canUseInteractivePrompts()) {
+          const dirInput = await text({
+            message: 'Which project directory should the bot use?',
+            initialValue: process.cwd(),
+            validate: (value: string | undefined) => {
+              if (!value?.trim()) return 'Directory is required'
+              if (!fs.existsSync(value.trim())) return 'Directory does not exist'
+              return undefined
+            },
+          })
+          if (isCancel(dirInput)) {
+            cancel('Setup cancelled')
+            process.exit(0)
+          }
+          projectDirectory = path.resolve(String(dirInput))
+        } else {
+          projectDirectory = process.cwd()
+        }
+
+        cliLogger.log(`Project directory: ${projectDirectory}`)
+
+        // ── Step 3: Privacy mode hint ────────────────────────────
+        if (canUseInteractivePrompts()) {
+          note(
+            'The bot works in three ways:\n' +
+            '\n' +
+            '  • DM the bot directly (simplest)\n' +
+            '  • Add it to a group and @mention it\n' +
+            '  • Add it to a group with privacy disabled\n' +
+            '\n' +
+            'In groups, the bot sees @mentions by default.\n' +
+            'To let it see all messages, send /setprivacy\n' +
+            'to @BotFather and choose Disable.\n' +
+            '\n' +
+            'For now, DMs and @mentions work out of the box.',
+            'Step 2: How to use',
+          )
+        }
+
+        // ── Step 4: Start everything ─────────────────────────────
+        s.start('Starting database...')
+        const hranaResult = await startHranaServer({
+          dbPath: path.join(getDataDir(), 'discord-sessions.db'),
+          bindAll: false,
+        })
+        if (hranaResult instanceof Error) {
+          s.stop('Failed')
+          cliLogger.error('Failed to start database:', hranaResult.message)
+          process.exit(EXIT_NO_RESTART)
+        }
+        await initDatabase()
+        s.stop('Database ready')
+
+        // Store bot token
+        await setBotToken(String(me.id), resolvedToken)
+        const prisma = await getPrisma()
+        await prisma.bot_tokens.update({
+          where: { app_id: String(me.id) },
+          data: { platform: 'telegram' },
+        }).catch(() => {})
+
+        // Bind directory
+        await bindTelegramChat({
+          chatId: 'tg:default',
+          directory: projectDirectory,
+        })
+
+        s.start('Starting OpenCode server...')
+        const getClient = await initializeOpencodeForDirectory(projectDirectory)
+        if (getClient instanceof Error) {
+          s.stop('Failed')
+          cliLogger.error('Failed to start OpenCode:', getClient.message)
+          process.exit(EXIT_NO_RESTART)
+        }
+        s.stop('OpenCode ready')
+
+        s.start('Starting Telegram bot...')
+        const bot = await startTelegramBot({
+          token: resolvedToken,
+          appId: String(me.id),
+        })
+        s.stop('Telegram bot running')
+
+        if (canUseInteractivePrompts()) {
+          outro(
+            `Bot @${me.username} is live!\n` +
+            '\n' +
+            `  Send a DM to @${me.username} to start a session.\n` +
+            '  Or add it to a group and @mention it.\n' +
+            '\n' +
+            '  Press Ctrl+C to stop.',
+          )
+        } else {
+          cliLogger.log(`Telegram bot @${me.username} is running.`)
+          cliLogger.log(`Directory: ${projectDirectory}`)
+        }
+
+        // Keep process alive
+        const shutdown = () => {
+          cliLogger.log('\nShutting down...')
+          bot.stop()
+          process.exit(0)
+        }
+        process.on('SIGINT', shutdown)
+        process.on('SIGTERM', shutdown)
+      } catch (error) {
+        cliLogger.error('Error:', formatErrorWithStack(error))
+        process.exit(EXIT_NO_RESTART)
+      }
+    },
+  )
+
 cli.version(getCurrentVersion())
 cli.help()
 cli.parse()

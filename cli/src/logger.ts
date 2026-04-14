@@ -43,6 +43,7 @@ export const LogPrefix = {
   SESSION: 'SESSION',
   SHARE: 'SHARE',
   TASK: 'TASK',
+  TELEGRAM: 'TELEGRAM',
   TOOLS: 'TOOLS',
   UNDO_REDO: 'UNDO',
   USER_CMD: 'USER_CMD',

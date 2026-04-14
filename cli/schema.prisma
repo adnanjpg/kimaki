@@ -55,6 +55,7 @@ model part_messages {
 model bot_tokens {
   app_id        String    @id
   token         String
+  platform      Platform  @default(discord)
   bot_mode      BotMode   @default(self_hosted)
   client_id     String?
   client_secret String?
@@ -70,6 +71,11 @@ model bot_tokens {
 enum BotMode {
   self_hosted
   gateway
+}
+
+enum Platform {
+  discord
+  telegram
 }
 
 model channel_directories {
