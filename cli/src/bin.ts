@@ -21,6 +21,30 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
+// ── Load ~/.kimaki/.env if it exists ──────────────────────────────
+// Simple KEY=VALUE parser. Supports comments (#) and quoted values.
+// Loaded once at startup so all subcommands (telegram, discord, etc.)
+// automatically pick up env vars like GEMINI_API_KEY, bot tokens, etc.
+const envFile = path.join(os.homedir(), '.kimaki', '.env')
+if (fs.existsSync(envFile)) {
+  for (const line of fs.readFileSync(envFile, 'utf-8').split('\n')) {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith('#')) continue
+    const eqIdx = trimmed.indexOf('=')
+    if (eqIdx === -1) continue
+    const key = trimmed.slice(0, eqIdx).trim()
+    let value = trimmed.slice(eqIdx + 1).trim()
+    // Strip surrounding quotes
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1)
+    }
+    // Don't override existing env vars (explicit env takes precedence)
+    if (!(key in process.env)) {
+      process.env[key] = value
+    }
+  }
+}
+
 const HEAP_SNAPSHOT_DIR = path.join(os.homedir(), '.kimaki', 'heap-snapshots')
 
 // First arg after node + script is either a subcommand or a flag.
